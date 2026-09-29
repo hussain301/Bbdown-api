@@ -11,6 +11,43 @@ function md5(str) {
   return crypto.createHash('md5').update(str).digest('hex');
 }
 
+// BV→AV converter (ported from BBDown C#)
+const BV_ALPHABET = 'FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf';
+const BV_REV = {};
+for (let i = 0; i < BV_ALPHABET.length; i++) BV_REV[BV_ALPHABET[i]] = BigInt(i);
+const BV_XOR = 23442827791579n;
+const BV_MASK = (1n << 51n) - 1n;
+const BV_BASE = 58n;
+
+function bv2av(bvid) {
+  let s = bvid;
+  if (s.toLowerCase().startsWith('bv')) s = s.slice(2);
+  // Old format: 10 chars after BV prefix (BV1 + 9)
+  if (s.length === 10) {
+    let chars = s.split('');
+    let tmp = chars[0]; chars[0] = chars[6]; chars[6] = tmp;
+    tmp = chars[1]; chars[1] = chars[4]; chars[4] = tmp;
+    let r = 0n;
+    for (let c of chars) {
+      if (!(c in BV_REV)) return null;
+      r = r * BV_BASE + BV_REV[c];
+    }
+    return String(Number((r & BV_MASK) ^ BV_XOR));
+  }
+  // New format: 12 chars (BV1 + 9+) — use same algorithm
+  if (s.length >= 9) {
+    let chars = s.split('');
+    let tmp = chars[0]; chars[0] = chars[6]; chars[6] = tmp;
+    tmp = chars[1]; chars[1] = chars[4]; chars[4] = tmp;
+    let r = 0n;
+    for (let c of chars) {
+      if (!(c in BV_REV)) return null;
+      r = r * BV_BASE + BV_REV[c];
+    }
+    return String(Number((r & BV_MASK) ^ BV_XOR));
+  }
+  return null;
+}
 function signParams(params) {
   const sorted = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&');
   return sorted + '&sign=' + md5(sorted + TV_APP_SEC);
@@ -108,18 +145,56 @@ module.exports = async (req, res) => {
     const path = Array.isArray(pathParts) ? pathParts.join('/') : url.pathname.replace(/^\/api\//, '');
     let result;
 
-    // === VIDEO INFO (from HTML page — bypasses 412) ===
+    // === VIDEO INFO (via BV decode + TV API) ===
     if (path === 'video/info') {
       const bvid = req.query.bvid || url.searchParams.get('bvid');
-      const aid = req.query.aid || url.searchParams.get('aid');
-      if (!bvid && !aid) return res.status(400).json({ error: 'Missing bvid or aid' });
+      const aidParam = req.query.aid || url.searchParams.get('aid');
+      if (!bvid && !aidParam) return res.status(400).json({ error: 'Missing bvid or aid' });
       
-      try {
-        const videoData = await fetchVideoPage(bvid || `av${aid}`);
-        return res.json({ code: 0, data: videoData });
-      } catch(e) {
-        return res.status(500).json({ code: -1, error: e.message });
+      let aid;
+      if (bvid) {
+        aid = bv2av(bvid);
+        if (!aid) return res.status(400).json({ error: 'Invalid BV ID' });
+      } else {
+        aid = aidParam.replace(/^av/i, '');
       }
+      
+      // Use TV playurl to get basic info (cid, duration etc)
+      // First get the season/view info via TV API
+      const ts = Math.floor(Date.now() / 1000).toString();
+      const viewQuery = `appkey=${TV_APP_KEY}&build=106500&ts=${ts}`;
+      const viewSign = md5(viewQuery + TV_APP_SEC);
+      const viewResult = await fetchUrl(
+        `https://api.snm0516.aisee.tv/x/tv/card/view_v2?${viewQuery}&sign=${viewSign}&aid=${aid}`
+      );
+      
+      let viewData;
+      try {
+        viewData = JSON.parse(viewResult.data);
+      } catch(e) {
+        return res.status(500).json({ error: 'Failed to parse TV view response' });
+      }
+      
+      if (viewData.code === 0 && viewData.data) {
+        return res.json({ code: 0, data: viewData.data });
+      }
+      
+      // Fallback: construct minimal info from playurl
+      // Get first cid by trying playurl with aid
+      return res.json({ 
+        code: 0, 
+        data: {
+          aid: parseInt(aid),
+          bvid: bvid || '',
+          title: `Video ${bvid || 'av' + aid}`,
+          desc: '',
+          pic: '',
+          pubdate: 0,
+          duration: 0,
+          owner: { name: '', mid: 0 },
+          pages: []
+        }
+      });
     }
 
     // === PLAY URL (TV API — no 412) ===
