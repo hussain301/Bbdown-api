@@ -2,7 +2,7 @@ const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const TV_APP_KEY = '4409e2ce8ffd12b8';
 const TV_APP_SEC = '59b43e04ad6965f34319062b478f83dd';
 
@@ -132,6 +132,15 @@ module.exports = async (req, res) => {
         method: 'POST',
         body,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+    }
+    else if (path === 'debug') {
+      const biliCookies = await getBiliCookies();
+      const testReq = await fetchUrl('https://api.bilibili.com/x/web-interface/view?bvid=BV1WXhn6jEjS');
+      return res.json({
+        cookies: biliCookies,
+        apiStatus: testReq.status,
+        apiDataPreview: testReq.data.slice(0, 300)
       });
     }
     else if (path === 'user/nav') {
