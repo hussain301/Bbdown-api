@@ -56,12 +56,14 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const path = url.pathname.replace('/api/', '');
+    const url = new URL(req.url, `https://${req.headers.host}`);
+    // Vercel passes catch-all as query.path array or in the URL
+    const pathParts = req.query?.path || [];
+    const path = Array.isArray(pathParts) ? pathParts.join('/') : url.pathname.replace(/^\/api\//, '');
     let result;
 
     if (path === 'proxy') {
-      const targetUrl = url.searchParams.get('url');
+      const targetUrl = req.query.url || url.searchParams.get('url');
       if (!targetUrl) return res.status(400).json({ error: 'Missing url' });
       const cookie = req.headers['x-cookie'] || '';
       result = await fetchUrl(targetUrl, { cookie });
@@ -70,7 +72,7 @@ module.exports = async (req, res) => {
       result = await fetchUrl('https://passport.bilibili.com/x/passport-login/web/qrcode/generate');
     }
     else if (path === 'login/web/qr/poll') {
-      const key = url.searchParams.get('qrcode_key');
+      const key = req.query.qrcode_key || url.searchParams.get('qrcode_key');
       result = await fetchUrl(`https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=${key}`);
     }
     else if (path === 'login/tv/qr/generate') {
@@ -87,7 +89,7 @@ module.exports = async (req, res) => {
       });
     }
     else if (path === 'login/tv/qr/poll') {
-      const auth_code = url.searchParams.get('auth_code');
+      const auth_code = req.query.auth_code || url.searchParams.get('auth_code');
       const params = {
         appkey: TV_APP_KEY,
         auth_code,
@@ -106,7 +108,7 @@ module.exports = async (req, res) => {
       result = await fetchUrl('https://api.bilibili.com/x/web-interface/nav', { cookie });
     }
     else if (path === 'stream') {
-      const streamUrl = url.searchParams.get('url');
+      const streamUrl = req.query.url || url.searchParams.get('url');
       if (!streamUrl) return res.status(400).json({ error: 'Missing url' });
       // Stream proxy - pipe directly
       const parsedUrl = new URL(streamUrl);
