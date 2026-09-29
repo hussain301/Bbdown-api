@@ -21,8 +21,38 @@ function corsHeaders(res) {
   res.setHeader('Access-Control-Allow-Headers', '*');
 }
 
-function fetchUrl(url, options = {}) {
+function getRealCookies() {
   return new Promise((resolve, reject) => {
+    const req = https.request('https://www.bilibili.com', {
+      method: 'GET',
+      headers: { 'User-Agent': UA }
+    }, (response) => {
+      let cookies = '';
+      const setCookies = response.headers['set-cookie'] || [];
+      cookies = setCookies.map(c => c.split(';')[0]).join('; ');
+      // Consume body
+      response.on('data', () => {});
+      response.on('end', () => resolve(cookies));
+    });
+    req.on('error', () => resolve('buvid3=' + crypto.randomUUID() + 'infoc'));
+    req.end();
+  });
+}
+
+let cachedCookies = null;
+let cookieTime = 0;
+
+async function getBiliCookies() {
+  // Cache cookies for 5 minutes
+  if (cachedCookies && Date.now() - cookieTime < 300000) return cachedCookies;
+  cachedCookies = await getRealCookies();
+  cookieTime = Date.now();
+  return cachedCookies;
+}
+
+function fetchUrl(url, options = {}) {
+  return new Promise(async (resolve, reject) => {
+    const biliCookies = await getBiliCookies();
     const parsedUrl = new URL(url);
     const mod = parsedUrl.protocol === 'https:' ? https : http;
     const headers = {
@@ -31,8 +61,9 @@ function fetchUrl(url, options = {}) {
       ...(options.headers || {})
     };
     
-    const buvid3 = crypto.randomUUID() + 'infoc';
-    headers['Cookie'] = (options.cookie ? `${options.cookie}; ` : '') + `buvid3=${buvid3}`;
+    headers['Cookie'] = options.cookie 
+      ? `${options.cookie}; ${biliCookies}` 
+      : biliCookies;
 
     const req = mod.request(parsedUrl, {
       method: options.method || 'GET',
