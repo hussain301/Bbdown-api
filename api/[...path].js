@@ -145,56 +145,24 @@ module.exports = async (req, res) => {
     const path = Array.isArray(pathParts) ? pathParts.join('/') : url.pathname.replace(/^\/api\//, '');
     let result;
 
-    // === VIDEO INFO (via BV decode + TV API) ===
+    // === VIDEO INFO (via app.bilibili.com — no 412!) ===
     if (path === 'video/info') {
       const bvid = req.query.bvid || url.searchParams.get('bvid');
       const aidParam = req.query.aid || url.searchParams.get('aid');
       if (!bvid && !aidParam) return res.status(400).json({ error: 'Missing bvid or aid' });
       
-      let aid;
-      if (bvid) {
-        aid = bv2av(bvid);
-        if (!aid) return res.status(400).json({ error: 'Invalid BV ID' });
-      } else {
-        aid = aidParam.replace(/^av/i, '');
-      }
-      
-      // Use TV playurl to get basic info (cid, duration etc)
-      // First get the season/view info via TV API
+      // Use app API — works from any IP, no cookies needed
       const ts = Math.floor(Date.now() / 1000).toString();
-      const viewQuery = `appkey=${TV_APP_KEY}&build=106500&ts=${ts}`;
-      const viewSign = md5(viewQuery + TV_APP_SEC);
-      const viewResult = await fetchUrl(
-        `https://api.snm0516.aisee.tv/x/tv/card/view_v2?${viewQuery}&sign=${viewSign}&aid=${aid}`
-      );
-      
-      let viewData;
-      try {
-        viewData = JSON.parse(viewResult.data);
-      } catch(e) {
-        return res.status(500).json({ error: 'Failed to parse TV view response' });
+      let query;
+      if (bvid) {
+        query = `appkey=${TV_APP_KEY}&build=106500&bvid=${bvid}&ts=${ts}`;
+      } else {
+        const aid = aidParam.replace(/^av/i, '');
+        query = `aid=${aid}&appkey=${TV_APP_KEY}&build=106500&ts=${ts}`;
       }
+      const sign = md5(query + TV_APP_SEC);
       
-      if (viewData.code === 0 && viewData.data) {
-        return res.json({ code: 0, data: viewData.data });
-      }
-      
-      // Fallback: construct minimal info from playurl
-      // Get first cid by trying playurl with aid
-      return res.json({ 
-        code: 0, 
-        data: {
-          aid: parseInt(aid),
-          bvid: bvid || '',
-          title: `Video ${bvid || 'av' + aid}`,
-          desc: '',
-          pic: '',
-          pubdate: 0,
-          duration: 0,
-          owner: { name: '', mid: 0 },
-          pages: []
-        }
-      });
+      result = await fetchUrl(`https://app.bilibili.com/x/v2/view?${query}&sign=${sign}`);
     }
 
     // === PLAY URL (TV API — no 412) ===
